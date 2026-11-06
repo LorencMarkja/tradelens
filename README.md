@@ -1,4 +1,4 @@
-# TradeLens — Compare Sales Options
+# TradeLens - AI-Assisted Sales Comparison
 
 Compare sale offers for a commodity lot on estimated margin, and turn unstructured commercial messages into reviewable, user-confirmed update proposals.
 
