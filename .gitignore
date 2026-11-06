@@ -1,0 +1,35 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# IDEs and OS files
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+.DS_Store
+Thumbs.db
+
+# Build output and dependencies
+**/target/
+**/node_modules/
+**/dist/
+**/.angular/
+**/out-tsc/
+**/coverage/
+backend/.mvn/wrapper/maven-wrapper.jar
+
+# Logs
+*.log
+logs/
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/

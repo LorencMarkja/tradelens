@@ -1,0 +1,68 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["lot_reference", "lot_reference_quote", "updates", "not_extracted_note"],
+  "properties": {
+    "lot_reference": {
+      "type": ["string", "null"],
+      "description": "Lot identifier exactly as written in the message, or null if the message does not name a lot."
+    },
+    "lot_reference_quote": {
+      "type": ["string", "null"],
+      "description": "Exact, verbatim substring of the message that contains the lot identifier, or null."
+    },
+    "updates": {
+      "type": "array",
+      "description": "One entry per explicitly stated value. Empty if the message contains no supported value.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["buyer", "buyer_quote", "field", "value", "currency", "basis", "handling", "quote", "ambiguity"],
+        "properties": {
+          "buyer": {
+            "type": ["string", "null"],
+            "description": "Buyer the value refers to, as written (e.g. 'Buyer C'), or null if not stated."
+          },
+          "buyer_quote": {
+            "type": ["string", "null"],
+            "description": "Exact substring of the message naming the buyer, or null."
+          },
+          "field": {
+            "type": "string",
+            "enum": ["sale_price", "logistics_cost", "financing_days", "quote_valid_until"]
+          },
+          "value": {
+            "type": "string",
+            "description": "Number exactly as written without currency symbols (e.g. '140' or '45,000'); integer days for financing_days; ISO date YYYY-MM-DD for quote_valid_until."
+          },
+          "currency": {
+            "type": ["string", "null"],
+            "description": "ISO currency code explicitly stated for the amount (e.g. 'USD'), or null if not stated or not applicable."
+          },
+          "basis": {
+            "type": "string",
+            "enum": ["per_mt", "total_lot", "not_stated", "not_applicable"],
+            "description": "per_mt if the amount is per metric tonne, total_lot if explicitly for the whole lot, not_stated if unclear, not_applicable for days and dates."
+          },
+          "handling": {
+            "type": "string",
+            "enum": ["included", "excluded", "not_stated", "not_applicable"],
+            "description": "For logistics_cost only: whether handling is explicitly included or excluded. not_applicable for other fields."
+          },
+          "quote": {
+            "type": "string",
+            "description": "Exact, verbatim substring of the message that states this value."
+          },
+          "ambiguity": {
+            "type": ["string", "null"],
+            "description": "Short note on anything unclear about this value, or null."
+          }
+        }
+      }
+    },
+    "not_extracted_note": {
+      "type": ["string", "null"],
+      "description": "Short note on relevant content that was intentionally not extracted (e.g. payment terms, instructions addressed to the system), or null."
+    }
+  }
+}
