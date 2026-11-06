@@ -1,0 +1,337 @@
+openapi: 3.1.0
+info:
+  title: TradeLens API
+  version: 0.1.0
+  license:
+    name: MIT
+    identifier: MIT
+  description: |
+    Compare sale offers on estimated margin and turn commercial messages into verified update proposals.
+    Decimal values are transmitted as strings. Derived values (financing cost, margins, totals)
+    are always computed by the backend and rounded to cents (HALF_UP) for presentation only.
+    Errors use the `Error` schema. Synthetic data only.
+servers:
+  - url: http://127.0.0.1:8081
+    description: Docker Compose (via Nginx)
+# Local application without authentication (out of scope).
+security: []
+paths:
+  /api/scenario:
+    get:
+      operationId: getScenario
+      summary: Lot, offers, comparison results, active AI mode and sample messages
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+  /api/proposals/analyze:
+    post:
+      operationId: analyzeMessage
+      summary: Analyse a message and create a proposal (never modifies offers)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string, minLength: 1, maxLength: 5000 }
+      responses:
+        '200': { description: 'Proposal with validation and, when valid, the preview', content: { application/json: { schema: { $ref: '#/components/schemas/ProposalResponse' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '422': { description: 'DEMO_MESSAGE_NOT_RECOGNISED (demo mode, text is not a sample)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '502': { description: 'AI_UNAVAILABLE or AI_INVALID_RESPONSE', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '504': { description: AI_TIMEOUT, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/proposals/manual:
+    post:
+      operationId: createManualProposal
+      summary: Create a proposal from a manual edit (only changed values are proposed)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offerId]
+              properties:
+                offerId: { type: integer, format: int64 }
+                salePricePerMt: { type: string, pattern: '^\d{1,9}(\.\d{1,6})?$', description: 'Must be > 0' }
+                logisticsCostPerMt: { type: string, pattern: '^\d{1,9}(\.\d{1,6})?$' }
+                financingDays: { type: integer, minimum: 0, maximum: 365 }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ProposalResponse' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/proposals/{id}:
+    patch:
+      operationId: patchProposal
+      summary: Record user confirmations/integrations; the original extraction is kept unchanged
+      parameters: [{ $ref: '#/components/parameters/ProposalId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                offerId: { type: integer, format: int64, description: 'Only when the message does not name a buyer' }
+                changes:
+                  type: array
+                  items:
+                    type: object
+                    required: [field]
+                    properties:
+                      field: { $ref: '#/components/schemas/ProposalField' }
+                      confirmCurrencyUsd: { type: boolean }
+                      basis: { type: string, enum: [PER_MT, TOTAL_LOT] }
+                      confirmHandlingIncluded: { type: boolean }
+                      combinedValue: { type: string, description: 'Combined transport + handling USD/mt when the quote excludes handling' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ProposalResponse' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: PROPOSAL_CLOSED, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/proposals/{id}/preview:
+    get:
+      operationId: previewProposal
+      summary: Validation and before/after comparison without modifying anything
+      parameters: [{ $ref: '#/components/parameters/ProposalId' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ProposalResponse' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/proposals/{id}/apply:
+    post:
+      operationId: applyProposal
+      summary: Apply a valid proposal in one transaction (idempotent)
+      parameters: [{ $ref: '#/components/parameters/ProposalId' }]
+      responses:
+        '200': { description: 'Applied, or alreadyApplied=true on repeated confirmation', content: { application/json: { schema: { $ref: '#/components/schemas/ApplyResponse' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: 'STALE_PROPOSAL (offer changed since the proposal was created) or PROPOSAL_DISCARDED', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: 'PROPOSAL_NOT_READY or BUYER_REQUIRED', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/proposals/{id}/discard:
+    post:
+      operationId: discardProposal
+      summary: Discard a proposal
+      parameters: [{ $ref: '#/components/parameters/ProposalId' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ProposalResponse' } } } }
+        '409': { description: PROPOSAL_ALREADY_APPLIED, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /api/history:
+    get:
+      operationId: getHistory
+      summary: Applied changes, newest first
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/HistoryEntry' } }
+  /api/demo/reset:
+    post:
+      operationId: resetScenario
+      summary: Restore demo offers and clear proposals and history (configuration untouched)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scenario' } } } }
+  /actuator/health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      responses:
+        '200': { description: UP }
+components:
+  parameters:
+    ProposalId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Error:
+      description: Structured error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Decimal: { type: string, pattern: '^-?\d+(\.\d+)?$', examples: ['105000.00'] }
+    ValueSource: { type: string, enum: [DEMO_DATA, MANUAL_EDIT, MESSAGE_CONFIRMED] }
+    OfferStatus: { type: string, enum: [RANKED, INCOMPLETE, EXPIRED] }
+    ProposalField: { type: string, enum: [SALE_PRICE, LOGISTICS, FINANCING_DAYS, QUOTE_VALID_UNTIL] }
+    Origin: { type: string, enum: [MANUAL, AI_LIVE, AI_DEMO] }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, examples: [STALE_PROPOSAL] }
+        message: { type: string }
+        field: { type: string }
+    Scenario:
+      type: object
+      properties:
+        scenarioDate: { type: string, format: date }
+        ai:
+          type: object
+          properties:
+            mode: { type: string, enum: [demo, live] }
+            label: { type: string }
+            model: { type: string }
+            promptVersion: { type: string }
+        lot:
+          type: object
+          properties:
+            code: { type: string }
+            product: { type: string }
+            quantityMt: { $ref: '#/components/schemas/Decimal' }
+            location: { type: string }
+            currency: { type: string }
+            purchaseCostPerMt: { $ref: '#/components/schemas/Decimal' }
+            financedCapitalPerMt: { $ref: '#/components/schemas/Decimal' }
+            annualRatePercent: { $ref: '#/components/schemas/Decimal' }
+            dayCountBasis: { type: integer }
+            financingConvention: { type: string }
+        offers: { type: array, items: { $ref: '#/components/schemas/Offer' } }
+        highestOfferIds: { type: array, items: { type: integer } }
+        rankingNote: { type: [string, 'null'] }
+        samples:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              message: { type: string }
+    Offer:
+      type: object
+      properties:
+        id: { type: integer }
+        buyer: { type: string }
+        version: { type: integer }
+        salePricePerMt: { $ref: '#/components/schemas/Decimal' }
+        salePriceSource: { $ref: '#/components/schemas/ValueSource' }
+        logisticsCostPerMt: { $ref: '#/components/schemas/Decimal' }
+        logisticsSource: { $ref: '#/components/schemas/ValueSource' }
+        financingDays: { type: [integer, 'null'] }
+        financingDaysSource: { $ref: '#/components/schemas/ValueSource' }
+        validUntil: { type: string, format: date }
+        logisticsQuoteExpiry: { type: [string, 'null'], format: date }
+        financingCostPerMt: { $ref: '#/components/schemas/Decimal' }
+        marginPerMt: { $ref: '#/components/schemas/Decimal' }
+        totalMargin: { $ref: '#/components/schemas/Decimal' }
+        status: { $ref: '#/components/schemas/OfferStatus' }
+        statusReasons: { type: array, items: { type: string } }
+        highest: { type: boolean }
+        rank: { type: [integer, 'null'] }
+        threshold:
+          type: [object, 'null']
+          properties:
+            competitorOfferId: { type: integer }
+            competitorBuyer: { type: string }
+            competitorMarginPerMt: { $ref: '#/components/schemas/Decimal' }
+            logisticsCostPerMt: { $ref: '#/components/schemas/Decimal' }
+    Issue:
+      type: object
+      properties:
+        code: { type: string, examples: [CURRENCY_MISSING, LOT_MISMATCH, MULTIPLE_OFFERS, HANDLING_UNSPECIFIED] }
+        severity: { type: string, enum: [BLOCKING, WARNING, INFO] }
+        message: { type: string }
+        field: { $ref: '#/components/schemas/ProposalField' }
+        action: { type: string, enum: [SELECT_BUYER, CONFIRM_CURRENCY, CHOOSE_BASIS, CONFIRM_HANDLING, ENTER_COMBINED_VALUE] }
+    Correction:
+      type: object
+      properties:
+        at: { type: string, format: date-time }
+        field: { $ref: '#/components/schemas/ProposalField' }
+        kind: { type: string, examples: [CURRENCY_CONFIRMED, BUYER_SELECTED] }
+        description: { type: string }
+    ProposalResponse:
+      type: object
+      properties:
+        proposal:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            origin: { $ref: '#/components/schemas/Origin' }
+            status: { type: string, enum: [NEEDS_REVIEW, READY, APPLIED, DISCARDED] }
+            message: { type: string }
+            offerId: { type: integer }
+            buyer: { type: string }
+            buyerSelectable: { type: boolean }
+            baseOfferVersion: { type: integer }
+            createdAt: { type: string, format: date-time }
+            aiModel: { type: string }
+            promptVersion: { type: string }
+            lotReference: { type: string }
+            originalExtraction: { type: string, description: Raw structured output as received }
+            changes:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { $ref: '#/components/schemas/ProposalField' }
+                  label: { type: string }
+                  unit: { type: string }
+                  buyer: { type: string }
+                  extractedValue: { type: string }
+                  extractedCurrency: { type: string }
+                  extractedBasis: { type: string, enum: [PER_MT, TOTAL_LOT, NOT_STATED, NOT_APPLICABLE] }
+                  extractedHandling: { type: string, enum: [INCLUDED, EXCLUDED, NOT_STATED, NOT_APPLICABLE] }
+                  quote: { type: string, description: Verbatim text of the message supporting the value }
+                  currentValue: { type: string }
+                  proposedValue: { type: string, description: Normalised value (e.g. total converted to per mt) }
+                  note: { type: string }
+            corrections: { type: array, items: { $ref: '#/components/schemas/Correction' } }
+        canApply: { type: boolean }
+        issues: { type: array, items: { $ref: '#/components/schemas/Issue' } }
+        impact:
+          type: object
+          properties:
+            offerId: { type: integer }
+            buyer: { type: string }
+            before: { $ref: '#/components/schemas/Metrics' }
+            after: { $ref: '#/components/schemas/Metrics' }
+            marginPerMtChange: { $ref: '#/components/schemas/Decimal' }
+            totalMarginChange: { $ref: '#/components/schemas/Decimal' }
+        comparisonBefore: { type: array, items: { $ref: '#/components/schemas/Offer' } }
+        comparisonAfter: { type: array, items: { $ref: '#/components/schemas/Offer' } }
+    Metrics:
+      type: object
+      properties:
+        financingCostPerMt: { $ref: '#/components/schemas/Decimal' }
+        marginPerMt: { $ref: '#/components/schemas/Decimal' }
+        totalMargin: { $ref: '#/components/schemas/Decimal' }
+        status: { $ref: '#/components/schemas/OfferStatus' }
+        highest: { type: boolean }
+        rank: { type: [integer, 'null'] }
+    ApplyResponse:
+      type: object
+      properties:
+        proposalId: { type: string, format: uuid }
+        alreadyApplied: { type: boolean }
+        changeEventId: { type: integer }
+        offerId: { type: integer }
+        changedFields: { type: array, items: { $ref: '#/components/schemas/ProposalField' } }
+        scenario: { $ref: '#/components/schemas/Scenario' }
+    HistoryEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        proposalId: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        offerId: { type: integer }
+        buyer: { type: string }
+        origin: { $ref: '#/components/schemas/Origin' }
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { $ref: '#/components/schemas/ProposalField' }
+              label: { type: string }
+              unit: { type: string }
+              before: { type: [string, 'null'] }
+              after: { type: [string, 'null'] }
+        message: { type: string }
+        originalExtraction: { type: string }
+        corrections: { type: array, items: { $ref: '#/components/schemas/Correction' } }
+        aiModel: { type: string }
+        promptVersion: { type: string }
+        totalMarginBefore: { $ref: '#/components/schemas/Decimal' }
+        totalMarginAfter: { $ref: '#/components/schemas/Decimal' }
+        totalMarginChange: { $ref: '#/components/schemas/Decimal' }
